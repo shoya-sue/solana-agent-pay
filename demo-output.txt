@@ -1,0 +1,166 @@
+solana-agent-pay — an AI agent that pays for API calls by itself (Solana devnet, x402-style)
+run at 2026-10-08T08:21:41.849Z · model claude-sonnet-5-5 · rpc https://api.devnet.solana.com
+
+━━━ 1. Devnet wallets & funding ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   funder (fees + mint authority): EFXrd36oQnr64hNLp2BdXWRh3KFakicfwPUoXs3JePv7
+   agent  (payer)                : 3FEmjYNBFa5ncR8nUE7UUwx4G6x98MWS3TYAzNxT7w5U
+   server (payTo / recipient)    : Egc4sm4qc3BGCX9VMu9Gvp17PtLzno1jchSiBWc2bPeA
+   funder balance: 5 SOL
+   sent 0.006 SOL to agent for tx fees: https://explorer.solana.com/tx/HK9D5agVyBV8yki4M6qjRMu5DppsY7Soa2FYWvpbwKyTTjjZjabtYvLb22z3cm2CXTFw3hCjDcDC1Gvz64WypAp?cluster=devnet
+   created test SPL token dUSDC (6 decimals): 78RhEquiV9HyW32YNBpd48gz3bDwqNj5v5o3UZ8JHeSq
+   minted dUSDC to agent: https://explorer.solana.com/tx/23DCYyijhcaVL2NTtDFxDiP5Ry7WojU1xs7yJaaMqvWEcW6b31wEtTN9M83ztMWjxuQRjRmhrHknHaqQGag8f2nt?cluster=devnet
+   mint:   https://explorer.solana.com/address/78RhEquiV9HyW32YNBpd48gz3bDwqNj5v5o3UZ8JHeSq?cluster=devnet
+
+━━━ 2. Paid API server ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   listening on http://localhost:38551
+   [server] 402 /api/weather?city=Tokyo (no payment)
+   unpaid GET /api/weather?city=Tokyo → HTTP 402, PAYMENT-REQUIRED (decoded):
+     {
+       "x402Version": 2,
+       "error": "PAYMENT-SIGNATURE header is required",
+       "resource": {
+         "url": "/api/weather?city=Tokyo",
+         "description": "Current weather + today's forecast for a city (Open-Meteo) — 0.02 dUSDC",
+         "mimeType": "application/json"
+       },
+       "accepts": [
+         {
+           "scheme": "exact",
+           "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+           "amount": "20000",
+           "asset": "78RhEquiV9HyW32YNBpd48gz3bDwqNj5v5o3UZ8JHeSq",
+           "payTo": "Egc4sm4qc3BGCX9VMu9Gvp17PtLzno1jchSiBWc2bPeA",
+           "maxTimeoutSeconds": 120,
+           "extra": {
+             "paymentFlow": "upfront",
+             "assetTransferMethod": "client-broadcast",
+             "memo": "x402-L52jt6n2Zq787qUNw5yusE",
+             "expiresAt": 1791447830,
+             "decimals": 6,
+             "symbol": "dUSDC"
+           }
+         }
+       ]
+     }
+   agent dUSDC balance: 5 · server: 0
+   agent policy: per-call cap 0.10 dUSDC, total budget 0.30 dUSDC, allowlist [Egc4sm4qc3BGCX9VMu9Gvp17PtLzno1jchSiBWc2bPeA]
+
+━━━ 3. Scenario A — a task that needs paid data ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+👤 Task: 東京と大阪の今日の天気と空気の質を比べて、夕方に散歩するならどちらが向いているか教えてください。
+🔧 list_paid_apis({})
+   ↳ {"name":"solana-agent-pay demo API","protocol":"x402 v2 (Solana devnet, client-broadcast SPL transfer + memo reference)","network":"solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1","asset":{"mint":"78RhEquiV9HyW32YNBpd48gz3bD...
+🤖 Total needed: 2×0.02 + 2×0.01 = 0.06.
+🔧 request_api({"path":"/api/weather","query":{"city":"Tokyo"}})
+   [server] 402 /api/weather?city=Tokyo (no payment)
+   💳 402 Payment Required: /api/weather?city=Tokyo → 0.02 dUSDC (memo x402-4U3zxUVhcaDcpmmAfsxCoX)
+   ↳ {"status":402,"quote_id":"q1","resource":"/api/weather?city=Tokyo","description":"Current weather + today's forecast for a city (Open-Meteo) — 0.02 dUSDC","price":"0.02 dUSDC","pay_to":"Egc4sm4qc3BGCX9VMu9Gvp17PtLzno1...
+🔧 request_api({"path":"/api/weather","query":{"city":"Osaka"}})
+   [server] 402 /api/weather?city=Osaka (no payment)
+   💳 402 Payment Required: /api/weather?city=Osaka → 0.02 dUSDC (memo x402-Cs9TWJKYUGT5c7A7cGQmDd)
+   ↳ {"status":402,"quote_id":"q2","resource":"/api/weather?city=Osaka","description":"Current weather + today's forecast for a city (Open-Meteo) — 0.02 dUSDC","price":"0.02 dUSDC","pay_to":"Egc4sm4qc3BGCX9VMu9Gvp17PtLzno1...
+🔧 request_api({"path":"/api/air-quality","query":{"city":"Tokyo"}})
+   [server] 402 /api/air-quality?city=Tokyo (no payment)
+   💳 402 Payment Required: /api/air-quality?city=Tokyo → 0.01 dUSDC (memo x402-2zScDEaPFpuSPi2qgjGCe6)
+   ↳ {"status":402,"quote_id":"q3","resource":"/api/air-quality?city=Tokyo","description":"Current air quality (PM2.5, PM10, AQI) for a city — 0.01 dUSDC","price":"0.01 dUSDC","pay_to":"Egc4sm4qc3BGCX9VMu9Gvp17PtLzno1jchSi...
+🔧 request_api({"path":"/api/air-quality","query":{"city":"Osaka"}})
+   [server] 402 /api/air-quality?city=Osaka (no payment)
+   💳 402 Payment Required: /api/air-quality?city=Osaka → 0.01 dUSDC (memo x402-KyZk2cTLcPze7so3m4miQA)
+   ↳ {"status":402,"quote_id":"q4","resource":"/api/air-quality?city=Osaka","description":"Current air quality (PM2.5, PM10, AQI) for a city — 0.01 dUSDC","price":"0.01 dUSDC","pay_to":"Egc4sm4qc3BGCX9VMu9Gvp17PtLzno1jchSi...
+🔧 pay_and_retry({"quote_id":"q1","justification":"Tokyo weather needed for the comparison."})
+   justification: Tokyo weather needed for the comparison.
+   💸 PAID 0.02 dUSDC for /api/weather?city=Tokyo
+      tx: https://explorer.solana.com/tx/4wSGKrb8y1ubKfbcLTJumdoahFqYhMnyjk7ri4osdvoiB52kqeQYMNaYLSKrfQmFTUuZvmPoEUj5WbNBAiWbNKKa?cluster=devnet
+   [server] 200 /api/weather?city=Tokyo paid 0.02 dUSDC tx=4wSGKrb8y1ubKfbcLTJumdoahFqYhMnyjk7ri4osdvoiB52kqeQYMNaYLSKrfQmFTUuZvmPoEUj5WbNBAiWbNKKa
+   🔁 retried with PAYMENT-SIGNATURE → HTTP 200
+   ↳ {"status":200,"paid":"0.02 dUSDC","tx":"4wSGKrb8y1ubKfbcLTJumdoahFqYhMnyjk7ri4osdvoiB52kqeQYMNaYLSKrfQmFTUuZvmPoEUj5WbNBAiWbNKKa","remaining_budget":"0.28 dUSDC","data":{"city":"Tokyo","source":"open-meteo.com","obser...
+🔧 pay_and_retry({"quote_id":"q2","justification":"Osaka weather needed for the comparison."})
+   justification: Osaka weather needed for the comparison.
+   💸 PAID 0.02 dUSDC for /api/weather?city=Osaka
+      tx: https://explorer.solana.com/tx/4KcoNQXsZpRwqKnwDpaUYZ1ZQ1ka9rJaN8oypT2msorbt36V5ZSYiaztnk64qN2gizcvQJriUWNDRG5yCRrHVHwF?cluster=devnet
+   [server] 200 /api/weather?city=Osaka paid 0.02 dUSDC tx=4KcoNQXsZpRwqKnwDpaUYZ1ZQ1ka9rJaN8oypT2msorbt36V5ZSYiaztnk64qN2gizcvQJriUWNDRG5yCRrHVHwF
+   🔁 retried with PAYMENT-SIGNATURE → HTTP 200
+   ↳ {"status":200,"paid":"0.02 dUSDC","tx":"4KcoNQXsZpRwqKnwDpaUYZ1ZQ1ka9rJaN8oypT2msorbt36V5ZSYiaztnk64qN2gizcvQJriUWNDRG5yCRrHVHwF","remaining_budget":"0.26 dUSDC","data":{"city":"Osaka","source":"open-meteo.com","obser...
+🔧 pay_and_retry({"quote_id":"q3","justification":"Tokyo air quality needed for the comparison."})
+   justification: Tokyo air quality needed for the comparison.
+   💸 PAID 0.01 dUSDC for /api/air-quality?city=Tokyo
+      tx: https://explorer.solana.com/tx/Wi6rRvEpgNq7DLySd46Up86AbrXpaLW4DdvtXC54hhNNhaNuZrK9ifdW7fQvHLRbLvWXQBPpKcWmHNETGB2ruXs?cluster=devnet
+   [server] 200 /api/air-quality?city=Tokyo paid 0.01 dUSDC tx=Wi6rRvEpgNq7DLySd46Up86AbrXpaLW4DdvtXC54hhNNhaNuZrK9ifdW7fQvHLRbLvWXQBPpKcWmHNETGB2ruXs
+   🔁 retried with PAYMENT-SIGNATURE → HTTP 200
+   ↳ {"status":200,"paid":"0.01 dUSDC","tx":"Wi6rRvEpgNq7DLySd46Up86AbrXpaLW4DdvtXC54hhNNhaNuZrK9ifdW7fQvHLRbLvWXQBPpKcWmHNETGB2ruXs","remaining_budget":"0.25 dUSDC","data":{"city":"Tokyo","source":"open-meteo.com (air qua...
+🔧 pay_and_retry({"quote_id":"q4","justification":"Osaka air quality needed for the comparison."})
+   justification: Osaka air quality needed for the comparison.
+   💸 PAID 0.01 dUSDC for /api/air-quality?city=Osaka
+      tx: https://explorer.solana.com/tx/2D5AdvWJmJg17GFfUBGsuPc3dJB9jFsejHw2XTt8jRdMu3bjFNsWrBXFYFMUEYhLpr1HJroveAMD2Ng7dpUs9c1a?cluster=devnet
+   [server] 200 /api/air-quality?city=Osaka paid 0.01 dUSDC tx=2D5AdvWJmJg17GFfUBGsuPc3dJB9jFsejHw2XTt8jRdMu3bjFNsWrBXFYFMUEYhLpr1HJroveAMD2Ng7dpUs9c1a
+   🔁 retried with PAYMENT-SIGNATURE → HTTP 200
+   ↳ {"status":200,"paid":"0.01 dUSDC","tx":"2D5AdvWJmJg17GFfUBGsuPc3dJB9jFsejHw2XTt8jRdMu3bjFNsWrBXFYFMUEYhLpr1HJroveAMD2Ng7dpUs9c1a","remaining_budget":"0.24 dUSDC","data":{"city":"Osaka","source":"open-meteo.com (air qu...
+
+🤖 Final answer:
+   **結論:夕方の散歩は大阪のほうが向いています。**
+   
+   | | 東京 | 大阪 |
+   |---|---|---|
+   | 現在(17:15) | 22.0℃(体感22.2℃)、快晴 | 24.6℃(体感24.9℃)、快晴 |
+   | 今日の最高/最低 | 23.7℃ / 15.3℃ | 25.7℃ / 13.8℃ |
+   | 湿度 | 53% | 49% |
+   | 風 | 2.4 km/h | 4.3 km/h |
+   | 降水確率 | 4% | 0% |
+   | UV指数(最大) | 5.8 | 5.95 |
+   | PM2.5 / PM10 | 25.6 / 30.7 | 18.9 / 21.8 |
+   | US AQI | 93(moderate、上限に近い) | 64(moderate) |
+   | オゾン | 58 | 82 |
+   
+   - **天気:** どちらも快晴で雨の心配はありません。大阪は少し暖かく、風もわずかにあって快適です。東京は涼しめで、これも散歩向きです。
+   - **空気:** 大阪のほうがきれいです。PM2.5は東京が約26、大阪が約19です。東京のUS AQIは93で、「普通」の上限に近い数値です。大阪の64は余裕があります。ただしオゾンは大阪のほうが高めです。
+   - **注意:** 東京で散歩する場合、敏感な方は長時間の激しい運動を避けたほうが安心です。
+   
+   **支出:** 天気2件(0.02×2)と空気質2件(0.01×2)で合計0.06 dUSDCです。残り予算は0.24 dUSDCです。
+
+━━━ 4. Scenario B — a purchase above the per-call cap ━━━━━━━━━━━━━━━━━━━━━
+👤 Task: 東京のプレミアム48時間予報レポートを買って、明日いちばん雨の確率が低い時間帯を教えて。
+🔧 list_paid_apis({})
+   ↳ {"name":"solana-agent-pay demo API","protocol":"x402 v2 (Solana devnet, client-broadcast SPL transfer + memo reference)","network":"solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1","asset":{"mint":"78RhEquiV9HyW32YNBpd48gz3bD...
+🔧 request_api({"path":"/api/premium/forecast-report","query":{"city":"Tokyo"}})
+   [server] 402 /api/premium/forecast-report?city=Tokyo (no payment)
+   💳 402 Payment Required: /api/premium/forecast-report?city=Tokyo → 0.5 dUSDC (memo x402-GvwMSFuDHD2hHEnnF2SVZ1)
+   ↳ {"status":402,"quote_id":"q5","resource":"/api/premium/forecast-report?city=Tokyo","description":"Premium 48h hourly forecast report — 0.50 dUSDC","price":"0.5 dUSDC","pay_to":"Egc4sm4qc3BGCX9VMu9Gvp17PtLzno1jchSiBWc2...
+
+🤖 Final answer:
+   プレミアム48時間予報レポートは買えませんでした。価格が0.50 dUSDCで、1回あたりの上限0.1 dUSDCと残り予算0.24 dUSDCのどちらも超えているためです。そのため、明日いちばん雨の確率が低い時間帯はわかりません。
+   
+   代わりに使えそうな `/api/weather`(0.02 dUSDC)は、現在の天気と今日の予報だけです。明日の情報は含まれないので、今回の目的には合わず、買っていません。
+   
+   上限内で明日の時間帯別の降水確率を調べる手段は、今のところありません。上限を引き上げてもらえれば、レポートを購入してお答えします。
+   
+   支出: 今回は0 dUSDC(残り予算0.24 dUSDC)
+
+━━━ 5. Safety checks ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   [server] 402 /api/premium/forecast-report?city=Tokyo (no payment)
+   💳 402 Payment Required: /api/premium/forecast-report?city=Tokyo → 0.5 dUSDC (memo x402-NJEihCFWcUCxS7gXAsGWkq)
+   🛑 wallet refused to pay [per_call_cap_exceeded]: Price 500000 exceeds the per-call cap 100000.
+   ✔ over-cap payment refused by wallet guard: per_call_cap_exceeded
+   [server] 402 /api/weather?city=Kyoto (no payment)
+   💳 402 Payment Required: /api/weather?city=Kyoto → 0.02 dUSDC (memo x402-33ohWVzFpbgXFsDKgwuRD5)
+   ✔ tampered 402 (payTo changed) refused: recipient_not_allowlisted
+   [server] 402 /api/weather?city=Tokyo (no payment)
+   💳 402 Payment Required: /api/weather?city=Tokyo → 0.02 dUSDC (memo x402-D2dTzuT2vZKTGSWehL5sCj)
+   [server] 402 /api/weather?city=Tokyo payment rejected: replayed_signature
+   ✔ replayed signature rejected by server: HTTP 402 (replayed_signature)
+
+━━━ 6. Summary ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   payments made by the agent: 4, total 0.06 dUSDC (budget 0.30)
+   • 0.02 dUSDC  /api/weather?city=Tokyo
+     https://explorer.solana.com/tx/4wSGKrb8y1ubKfbcLTJumdoahFqYhMnyjk7ri4osdvoiB52kqeQYMNaYLSKrfQmFTUuZvmPoEUj5WbNBAiWbNKKa?cluster=devnet
+   • 0.02 dUSDC  /api/weather?city=Osaka
+     https://explorer.solana.com/tx/4KcoNQXsZpRwqKnwDpaUYZ1ZQ1ka9rJaN8oypT2msorbt36V5ZSYiaztnk64qN2gizcvQJriUWNDRG5yCRrHVHwF?cluster=devnet
+   • 0.01 dUSDC  /api/air-quality?city=Tokyo
+     https://explorer.solana.com/tx/Wi6rRvEpgNq7DLySd46Up86AbrXpaLW4DdvtXC54hhNNhaNuZrK9ifdW7fQvHLRbLvWXQBPpKcWmHNETGB2ruXs?cluster=devnet
+   • 0.01 dUSDC  /api/air-quality?city=Osaka
+     https://explorer.solana.com/tx/2D5AdvWJmJg17GFfUBGsuPc3dJB9jFsejHw2XTt8jRdMu3bjFNsWrBXFYFMUEYhLpr1HJroveAMD2Ng7dpUs9c1a?cluster=devnet
+   agent dUSDC: 5 → 4.94
+   server dUSDC: 0 → 0.06
+   token mint (test SPL token, not Circle USDC): https://explorer.solana.com/address/78RhEquiV9HyW32YNBpd48gz3bDwqNj5v5o3UZ8JHeSq?cluster=devnet
+   agent wallet: https://explorer.solana.com/address/3FEmjYNBFa5ncR8nUE7UUwx4G6x98MWS3TYAzNxT7w5U?cluster=devnet
+   Claude usage (claude-sonnet-5-5): 14442 in / 1884 out tokens ≈ $0.0477
+
+✔ demo completed: on-chain received amount matches the agent's ledger

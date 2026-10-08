@@ -6,7 +6,20 @@ Claude（tool use）で動くエージェントが有料 API を呼び、`HTTP 4
 
 > ⚠️ **devnet 専用のデモです。** メインネットや実資金は一切使いません。決済トークン `dUSDC` は**このプロジェクトが devnet 上で独自に発行したテスト用 SPL トークン**（6 decimals）であり、Circle の devnet USDC ではありません。
 
-- 1 コマンドで実行: `npm run demo`（実行ログは実際の devnet トランザクション署名つきで `demo-output.txt` に保存されます）
+- 1 コマンドで実行: `npm run demo`
+- 実行ログ（実際の devnet トランザクション署名つき）: [`demo-output.txt`](./demo-output.txt)
+
+## デモ結果（devnet, 2026-10-08 実行）
+
+「東京と大阪の天気と空気の質を比べて、夕方の散歩に向いている方は？」というタスクで、エージェントは 4 回の 402 を受け取り、合計 0.06 dUSDC（総予算 0.30）を自分で支払ってデータを購入し、「大阪のほうが向いている」と回答しました。0.50 dUSDC のプレミアムレポート（1 回上限 0.10 超え）は購入を見送り、安全チェック（上限超過の拒否・改ざん 402 の拒否・署名リプレイの拒否）もすべて期待どおりでした。サーバーの受取残高の増加（0 → 0.06）はエージェントの支払い台帳と一致しています。
+
+| 支払い | 金額 | devnet トランザクション |
+|---|---|---|
+| `/api/weather?city=Tokyo` | 0.02 dUSDC | [4wSGKrb8…bNKKa](https://explorer.solana.com/tx/4wSGKrb8y1ubKfbcLTJumdoahFqYhMnyjk7ri4osdvoiB52kqeQYMNaYLSKrfQmFTUuZvmPoEUj5WbNBAiWbNKKa?cluster=devnet) |
+| `/api/weather?city=Osaka` | 0.02 dUSDC | [4KcoNQXs…RHVHwF](https://explorer.solana.com/tx/4KcoNQXsZpRwqKnwDpaUYZ1ZQ1ka9rJaN8oypT2msorbt36V5ZSYiaztnk64qN2gizcvQJriUWNDRG5yCRrHVHwF?cluster=devnet) |
+| `/api/air-quality?city=Tokyo` | 0.01 dUSDC | [Wi6rRvEp…2ruXs](https://explorer.solana.com/tx/Wi6rRvEpgNq7DLySd46Up86AbrXpaLW4DdvtXC54hhNNhaNuZrK9ifdW7fQvHLRbLvWXQBPpKcWmHNETGB2ruXs?cluster=devnet) |
+
+各トランザクションには SPL Token `TransferChecked`（受取人 ATA へ正確な金額）と、サーバーが発行したワンタイム参照の SPL Memo（例: `x402-4U3zxUVhcaDcpmmAfsxCoX`）が含まれます。テストトークンのミント: [78RhEqui…MqvWEcW6](https://explorer.solana.com/address/78RhEquiV9HyW32YNBpd48gz3bDwqNj5v5o3UZ8JHeSq?cluster=devnet)
 
 ## 何ができるか
 
@@ -118,17 +131,13 @@ npm run server                # http://localhost:4021
 npm run agent -- "京都と福岡の天気を比べて"   # 別ターミナルで
 ```
 
-### devnet SOL の入手について（レート制限への対処）
+### devnet SOL の入手について
 
-必要な SOL はごくわずかです（ミントのレント + トークンアカウント 2 つ + エージェントの手数料で約 0.012 SOL）。`npm run setup` / `npm run demo` は次の順で SOL を確保します。
+必要な SOL はごくわずかです（ミントのレント + トークンアカウント 2 つ + エージェントの手数料で約 0.012 SOL）。`npm run setup` / `npm run demo` は `funder` ウォレットの残高が足りなければ devnet エアドロップを要求し（429 のときはバックオフ + 減額してリトライ）、エージェントと受取人には `funder` から SOL を送金・レント負担します。
 
-1. `funder` ウォレットの残高が 0.015 SOL 以上なら何もしない（2 回目以降はエアドロップ不要）
-2. 足りなければ devnet エアドロップを要求し、レート制限（429）時は指数バックオフ + 要求額を減らしてリトライ
-3. それでも取れない場合は `funder` のアドレスを表示して終了（終了コード 2）。そのアドレスに **devnet SOL を約 0.05 送れば再実行で続きから進みます**（[faucet.solana.com](https://faucet.solana.com) は GitHub ログインで上限が上がります。手元の別の devnet ウォレットから `solana transfer --url devnet <funder> 0.05` でも可）
+公開フォーセットは IP 単位の上限が厳しく、取れないことがあります。その場合は表示される `funder` アドレスに devnet SOL を 0.05 ほど送ってから再実行してください（[faucet.solana.com](https://faucet.solana.com) は GitHub ログインで上限が上がります。手元の devnet ウォレットからなら `solana transfer --url devnet <funder> 0.05`）。
 
-エージェントと受取人のウォレットには `funder` から SOL を送金・レント負担するため、エアドロップが必要なのは `funder` の 1 回だけです。公開 devnet フォーセットは IP 単位の上限が厳しく、混雑時は「limit reached / faucet has run dry」で全く取れないことがあります。
-
-**ネットワークなしで動作確認したい場合**は、ローカルバリデータでも全フローを再現できます（devnet ではないので Explorer リンクはローカル RPC を指す `cluster=custom` になります）:
+ネットワークなしで試すなら、ローカルバリデータでも全フローを再現できます（Explorer リンクはローカル RPC を指す `cluster=custom` になります）:
 
 ```bash
 solana-test-validator --reset --quiet &   # Agave CLI
@@ -148,7 +157,7 @@ npm run demo:local                        # data/local/demo-output-local.txt に
 
 ```bash
 npm test             # ユニット + HTTP テスト（ネットワーク不要、決定的）
-npm run test:devnet  # devnet に実トランザクションを送る統合テスト（setup 済みが前提）
+npm run test:devnet  # devnet に実トランザクションを送る統合テスト（setup 済みが前提）。正常 / 金額違い / 受取人違い / リプレイ
 npm run typecheck
 ```
 
@@ -213,6 +222,8 @@ test/                    vitest
 - **Safety**: per-call cap and total budget enforced in code (the LLM cannot override them), recipient allowlist, mint/network restrictions, server-side replay protection, devnet-only guards.
 - **Token**: `dUSDC` is a **test SPL token minted by this project on devnet** (6 decimals), not Circle's devnet USDC.
 - **x402 alignment**: wire format (headers, `PaymentRequired`/`PaymentPayload`/`SettlementResponse`, `scheme: "exact"`, CAIP-2 network, `extra.memo`) follows x402 v2. The one deliberate difference is the transfer method: the client signs, pays the fee and broadcasts the transfer itself and sends the confirmed signature (`extra.assetTransferMethod: "client-broadcast"`, `paymentFlow: "upfront"`), instead of the official Solana `exact` flow where a facilitator co-signs and settles a partially-signed transaction. For production, migrate to the official scheme and SDKs (`@x402/svm`) with a facilitator.
+
+**Demo result (devnet):** the agent handled four 402s, paid 0.06 dUSDC in total (e.g. [Tokyo weather](https://explorer.solana.com/tx/4wSGKrb8y1ubKfbcLTJumdoahFqYhMnyjk7ri4osdvoiB52kqeQYMNaYLSKrfQmFTUuZvmPoEUj5WbNBAiWbNKKa?cluster=devnet), [Osaka weather](https://explorer.solana.com/tx/4KcoNQXsZpRwqKnwDpaUYZ1ZQ1ka9rJaN8oypT2msorbt36V5ZSYiaztnk64qN2gizcvQJriUWNDRG5yCRrHVHwF?cluster=devnet)), declined a 0.50 report above its 0.10 per-call cap, and all safety checks passed. Full transcript: [`demo-output.txt`](./demo-output.txt).
 
 ```bash
 npm install
