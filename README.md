@@ -2,6 +2,12 @@
 
 **AI エージェントが自分で API 利用料を払う** — Solana devnet 上の x402 スタイル決済デモ
 
+<p align="center">
+  <img src="docs/images/hero.svg" alt="AIエージェントが402を受け取り、Solana devnetでdUSDCを支払い、証明つきで再リクエストして200とデータを受け取る流れ" width="900">
+</p>
+
+> 画面はなく、ターミナルで動くデモです（有料 API サーバー ＋ AI エージェント）。`npm run demo` 1 コマンドで、エージェントが自分で支払う様子がログとして流れます。
+
 Claude（tool use）で動くエージェントが有料 API を呼び、`HTTP 402 Payment Required` を受け取ると、価格が予算内かを判断して SPL トークンで支払い、トランザクション署名を証明として付けて再リクエストし、タスクを完了します。サーバー側は devnet 上でトランザクションを検証（受取人・金額・ミント・参照メモ・リプレイ・確定状態）してからデータを返します。
 
 > ⚠️ **devnet 専用のデモです。** メインネットや実資金は一切使いません。決済トークン `dUSDC` は**このプロジェクトが devnet 上で独自に発行したテスト用 SPL トークン**（6 decimals）であり、Circle の devnet USDC ではありません。
@@ -13,6 +19,11 @@ Claude（tool use）で動くエージェントが有料 API を呼び、`HTTP 4
 
 「東京と大阪の天気と空気の質を比べて、夕方の散歩に向いている方は？」というタスクで、エージェントは 4 回の 402 を受け取り、合計 0.06 dUSDC（総予算 0.30）を自分で支払ってデータを購入し、「大阪のほうが向いている」と回答しました。0.50 dUSDC のプレミアムレポート（1 回上限 0.10 超え）は購入を見送り、安全チェック（上限超過の拒否・改ざん 402 の拒否・署名リプレイの拒否）もすべて期待どおりでした。サーバーの受取残高の増加（0 → 0.06）はエージェントの支払い台帳と一致しています。
 
+<p align="center">
+  <img src="docs/images/demo-terminal.svg" alt="npm run demo の実際の出力（抜粋）: 402 を受け取り、0.02 dUSDC を支払い、証明つきリトライで HTTP 200。プレミアムレポートは上限超えで見送り、安全チェックはすべて拒否" width="900">
+  <br><sub>実際の devnet 実行ログ <a href="./demo-output.txt"><code>demo-output.txt</code></a> の抜粋（⋮ は省略行、… は行末の省略）。<a href="docs/images/demo-terminal-animated.svg">アニメーション版</a></sub>
+</p>
+
 | 支払い | 金額 | devnet トランザクション |
 |---|---|---|
 | `/api/weather?city=Tokyo` | 0.02 dUSDC | [4wSGKrb8…bNKKa](https://explorer.solana.com/tx/4wSGKrb8y1ubKfbcLTJumdoahFqYhMnyjk7ri4osdvoiB52kqeQYMNaYLSKrfQmFTUuZvmPoEUj5WbNBAiWbNKKa?cluster=devnet) |
@@ -20,6 +31,17 @@ Claude（tool use）で動くエージェントが有料 API を呼び、`HTTP 4
 | `/api/air-quality?city=Tokyo` | 0.01 dUSDC | [Wi6rRvEp…2ruXs](https://explorer.solana.com/tx/Wi6rRvEpgNq7DLySd46Up86AbrXpaLW4DdvtXC54hhNNhaNuZrK9ifdW7fQvHLRbLvWXQBPpKcWmHNETGB2ruXs?cluster=devnet) |
 
 各トランザクションには SPL Token `TransferChecked`（受取人 ATA へ正確な金額）と、サーバーが発行したワンタイム参照の SPL Memo（例: `x402-4U3zxUVhcaDcpmmAfsxCoX`）が含まれます。テストトークンのミント: [78RhEqui…MqvWEcW6](https://explorer.solana.com/address/78RhEquiV9HyW32YNBpd48gz3bDwqNj5v5o3UZ8JHeSq?cluster=devnet)
+
+<details>
+<summary>📸 Solana Explorer で見た 1 件目の支払い（Tokyo weather, 0.02 dUSDC）</summary>
+<br>
+<p align="center">
+  <a href="https://explorer.solana.com/tx/4wSGKrb8y1ubKfbcLTJumdoahFqYhMnyjk7ri4osdvoiB52kqeQYMNaYLSKrfQmFTUuZvmPoEUj5WbNBAiWbNKKa?cluster=devnet">
+    <img src="docs/images/explorer-tx.png" alt="Solana Explorer (devnet) のトランザクション画面: Success / Finalized、エージェント -0.02・サーバー +0.02 のトークン増減、Token Program: Transfer (Checked) 0.02、Memo Program: x402-4U3zxUVhcaDcpmmAfsxCoX" width="700">
+  </a>
+  <br><sub>Status: Success（Finalized）、トークン残高の増減（エージェント −0.02 / サーバー +0.02）、<code>Transfer (Checked)</code> 命令、サーバー発行の参照メモ <code>x402-4U3zxUVhcaDcpmmAfsxCoX</code>。2026-10-08 にヘッドレス Chrome で取得したスクリーンショットを切り抜いたもの。</sub>
+</p>
+</details>
 
 ## 何ができるか
 
@@ -54,28 +76,60 @@ flowchart LR
     S --> D["データ提供元<br/>(Open-Meteo)"]
 ```
 
-### 決済フロー
+### 決済フロー（有料 API 1 回分）
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant C as Claude
-    participant A as エージェント (x402 クライアント + SpendGuard)
+    participant A as エージェント<br/>(x402 クライアント + SpendGuard)
     participant S as 有料 API サーバー
     participant L as Solana devnet
     C->>A: request_api("/api/weather", {city: "Tokyo"})
     A->>S: GET /api/weather?city=Tokyo
-    S-->>A: 402 + PAYMENT-REQUIRED {amount, asset, payTo, memo, expiresAt}
-    A-->>C: 見積もり（価格・上限・残予算）
+    S-->>A: 402 + PAYMENT-REQUIRED<br/>{amount, asset, payTo, memo, expiresAt}
+    A-->>C: 見積もり（価格・1回上限・残予算）
     C->>A: pay_and_retry(quote_id, 理由)
-    A->>A: SpendGuard: ネットワーク / ミント / 受取人 / 1回上限 / 総予算 / 期限
-    A->>L: TransferChecked(exact amount) + Memo(memo) を送信・確定待ち
-    A->>S: GET + PAYMENT-SIGNATURE {accepted, payload.transaction = 署名}
-    S->>L: getParsedTransaction(署名, confirmed)
-    S->>S: 受取人ATA・ミント・金額・メモ・期限・未使用を検証 → 消費済みにする
-    S-->>A: 200 + PAYMENT-RESPONSE + データ
-    A-->>C: データ + Explorer リンク
+    A->>A: SpendGuard チェック<br/>ネットワーク / ミント / 受取人 / 1回上限 / 総予算 / 期限
+    alt ポリシー違反（例: 0.50 > 上限 0.10）
+        A-->>C: 支払い拒否（理由コード）。オンチェーンには何も送らない
+    else 許可
+        A->>L: TransferChecked(正確な金額) + Memo(memo)
+        L-->>A: confirmed（tx 署名）
+        A->>S: GET + PAYMENT-SIGNATURE<br/>{accepted, payload.transaction = 署名}
+        S->>L: getParsedTransaction(署名, confirmed)
+        S->>S: 受取人 ATA・ミント・金額・メモ・期限・未使用を検証<br/>→ 参照と署名を消費済みにする
+        S-->>A: 200 + PAYMENT-RESPONSE + データ
+        A-->>C: データ + Explorer リンク
+    end
 ```
+
+### 安全チェックの全体像
+
+```mermaid
+flowchart LR
+    Q["402 の見積もり"] --> AG
+    subgraph AG["① エージェント側：支払う前（どれか NG なら支払わない）"]
+        direction TB
+        G1["devnet・許可ミントか"] --> G2["受取人が allowlist にあるか"] --> G3["1 回上限 0.10 以下か"] --> G4["総予算の残りで足りるか"]
+    end
+    AG -->|すべて OK| PAY["devnet で送金<br/>TransferChecked + Memo"]
+    PAY --> SV
+    subgraph SV["② サーバー側：データを返す前（どれか NG なら 402）"]
+        direction TB
+        V1["自分が発行した参照で期限内か"] --> V2["受取人・ミント・金額が完全一致か"] --> V3["署名・参照が未使用か（リプレイ防止）"]
+    end
+    SV -->|すべて OK| OK["200 + データ"]
+```
+
+| チェック | どこで | 守るもの | デモでの確認 |
+|---|---|---|---|
+| 1 回あたり上限（0.10 dUSDC） | エージェント（`SpendGuard`） | 高額な請求 | 0.50 のプレミアムレポートを拒否 `per_call_cap_exceeded` |
+| 総予算（0.30 dUSDC） | エージェント | 使いすぎ | 支払い中の分も予約として計上 |
+| 受取人 allowlist | エージェント | 改ざんされた 402 | `payTo` 差し替えを拒否 `recipient_not_allowlisted` |
+| devnet・許可ミントのみ | エージェント / サーバー | 誤ネットワーク・偽トークン | メインネット指定はテストで拒否 |
+| リプレイ防止（署名・参照は 1 回限り） | サーバー | 同じ支払いの使い回し | 使用済み署名の再送を拒否 `replayed_signature` |
+| 金額・受取人・ミント・メモの完全一致 | サーバー | 不足払い・別宛て送金 | ユニット / devnet テストで確認 |
 
 ## x402 との対応関係
 
@@ -216,6 +270,13 @@ test/                    vitest
 ## English
 
 **solana-agent-pay** is a demo of an AI agent that pays for API calls by itself on **Solana devnet**, using an **x402-style** flow: `HTTP 402 Payment Required` → pay → retry with proof.
+
+> There is no GUI: it is a terminal demo (a paid API server + an AI agent). See the overview image at the top, and this excerpt of a real devnet run:
+
+<p align="center">
+  <img src="docs/images/demo-terminal.svg" alt="Excerpt of a real npm run demo transcript on Solana devnet: 402, payment of 0.02 dUSDC, retry with proof, HTTP 200, the premium call declined above the per-call cap, and all safety checks blocked" width="900">
+  <br><sub>Excerpt of <a href="./demo-output.txt"><code>demo-output.txt</code></a> (⋮ = lines omitted, … = truncated). <a href="docs/images/demo-terminal-animated.svg">Animated version</a> · <a href="docs/images/explorer-tx.png">Explorer screenshot of the first payment</a></sub>
+</p>
 
 - A small **paid API server** answers unpaid requests with `402` and an x402 v2 `PaymentRequired` (header `PAYMENT-REQUIRED`: recipient, exact amount, SPL mint, CAIP-2 network, one-time memo reference, expiry). A paid retry carries a `PAYMENT-SIGNATURE` header with the transaction signature; the server verifies on devnet (confirmed, not failed, exactly one `TransferChecked` to the recipient's ATA, correct mint, exact amount, matching memo, before expiry, never used before) and then returns data with a `PAYMENT-RESPONSE` header.
 - A **Claude tool-use agent** (`claude-sonnet-5-5`) sees the price and its remaining budget, decides whether the purchase is worth it, pays with SPL tokens, retries with proof, and logs every payment with a Solana Explorer (devnet) link.
