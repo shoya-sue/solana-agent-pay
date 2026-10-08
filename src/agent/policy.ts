@@ -1,9 +1,9 @@
 /**
  * Spending policy enforced in code, independent of the LLM. Claude can *ask* to pay;
- * only this guard decides whether a payment is allowed.
+ * only this guard decides whether a payment is allowed. Works on standard x402 v2 PaymentRequirements.
  */
+import type { PaymentRequirements } from "@x402/core/types";
 import { NETWORK_DEVNET } from "../config.js";
-import { TRANSFER_METHOD_CLIENT_BROADCAST, type PaymentRequirements } from "../x402/types.js";
 
 export interface SpendPolicy {
   /** Max atomic units per single API call. */
@@ -18,15 +18,13 @@ export interface SpendPolicy {
   allowedNetworks?: string[];
 }
 
-export type PolicyDecision =
-  | { allowed: true }
-  | { allowed: false; code: string; reason: string };
+export type PolicyDecision = { allowed: true } | { allowed: false; code: string; reason: string };
 
 export class SpendGuard {
   private spent = 0n;
   private reserved = 0n;
 
-  constructor(readonly policy: SpendPolicy, private now: () => number = () => Math.floor(Date.now() / 1000)) {
+  constructor(readonly policy: SpendPolicy) {
     if (policy.perCallCap <= 0n || policy.totalBudget <= 0n) throw new Error("Caps must be positive");
   }
 
@@ -37,14 +35,14 @@ export class SpendGuard {
     return this.policy.totalBudget - this.spent - this.reserved;
   }
 
-  evaluate(req: PaymentRequirements): PolicyDecision {
+  /**
+   * @param quoteAgeSeconds how long ago the 402 was received; quotes older than maxTimeoutSeconds are refused
+   */
+  evaluate(req: PaymentRequirements, quoteAgeSeconds = 0): PolicyDecision {
     const p = this.policy;
     const networks = p.allowedNetworks ?? [NETWORK_DEVNET];
     if (req.scheme !== "exact") return deny("unsupported_scheme", `Scheme ${req.scheme} is not supported.`);
     if (!networks.includes(req.network)) return deny("network_not_allowed", `Network ${req.network} is not allowed (devnet only).`);
-    if (req.extra?.assetTransferMethod !== TRANSFER_METHOD_CLIENT_BROADCAST) {
-      return deny("unsupported_transfer_method", `Transfer method ${req.extra?.assetTransferMethod} is not supported.`);
-    }
     if (!p.allowedRecipients.includes(req.payTo)) return deny("recipient_not_allowlisted", `Recipient ${req.payTo} is not on the allowlist.`);
     if (!p.allowedAssets.includes(req.asset)) return deny("asset_not_allowed", `Token mint ${req.asset} is not allowed.`);
     let amount: bigint;
@@ -58,13 +56,13 @@ export class SpendGuard {
     if (amount > this.remainingAtomic) {
       return deny("total_budget_exceeded", `Price ${amount} exceeds the remaining budget ${this.remainingAtomic}.`);
     }
-    if (req.extra?.expiresAt && req.extra.expiresAt <= this.now() + 5) return deny("quote_expired", "Quote is expired or about to expire.");
+    if (req.maxTimeoutSeconds && quoteAgeSeconds > req.maxTimeoutSeconds) return deny("quote_expired", "Quote is older than maxTimeoutSeconds.");
     return { allowed: true };
   }
 
-  /** Reserve funds before broadcasting; commit or release afterwards. */
-  reserve(req: PaymentRequirements): PolicyDecision {
-    const d = this.evaluate(req);
+  /** Reserve funds before signing; commit once the facilitator settled, release otherwise. */
+  reserve(req: PaymentRequirements, quoteAgeSeconds = 0): PolicyDecision {
+    const d = this.evaluate(req, quoteAgeSeconds);
     if (d.allowed) this.reserved += BigInt(req.amount);
     return d;
   }

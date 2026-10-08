@@ -1,33 +1,26 @@
 /**
- * Paid API server (x402-style). Pure node:http, no framework.
+ * Paid API server using the official x402 Express middleware.
  *
  *   GET /catalog                      free — lists paid endpoints and prices
  *   GET /api/weather?city=Tokyo       0.02 dUSDC
  *   GET /api/air-quality?city=Tokyo   0.01 dUSDC
  *   GET /api/premium/forecast-report  0.50 dUSDC (deliberately above the agent's per-call cap)
+ *
+ * Unpaid requests get HTTP 402 with a standard x402 v2 `PAYMENT-REQUIRED` header (scheme `exact`,
+ * Solana devnet, asset = our test mint, `extra.feePayer` = the facilitator's fee payer). A paid retry
+ * carries `PAYMENT-SIGNATURE` with the client's partially-signed transaction; the facilitator verifies
+ * it, the handler runs, then the facilitator co-signs and broadcasts (settles) before the response is sent.
  */
-import http from "node:http";
-import crypto from "node:crypto";
-import bs58 from "bs58";
-import { Connection } from "@solana/web3.js";
+import express, { type Express } from "express";
+import { paymentMiddleware, x402ResourceServer } from "@x402/express";
+import type { FacilitatorClient } from "@x402/core/server";
+import type { RoutesConfig } from "@x402/core/http";
+import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { NETWORK_DEVNET, TOKEN_DECIMALS, TOKEN_SYMBOL } from "../config.js";
-import { fromAtomic, toAtomic } from "../lib/amount.js";
-import {
-  X402_VERSION,
-  HEADER_PAYMENT_REQUIRED,
-  HEADER_PAYMENT_RESPONSE,
-  HEADER_PAYMENT_SIGNATURE,
-  TRANSFER_METHOD_CLIENT_BROADCAST,
-  decodeHeader,
-  encodeHeader,
-  type PaymentPayload,
-  type PaymentRequired,
-  type PaymentRequirements,
-  type SettlementResponse,
-} from "../x402/types.js";
-import type { PaymentStore } from "./store.js";
-import { verifyPayment, type FetchTx } from "./verify.js";
+import { toAtomic } from "../lib/amount.js";
 import { getAirQuality, getPremiumReport, getWeather, UnknownCityError } from "./data.js";
+import { ReplayGuard } from "./replay.js";
+import { attachSettlementReconciler, type SignatureCheck } from "./reconcile.js";
 
 export interface PaidRoute {
   path: string;
@@ -64,137 +57,104 @@ export const ROUTES: PaidRoute[] = [
 export interface ServerOptions {
   payTo: string;
   mint: string;
-  store: PaymentStore;
-  connection?: Connection;
-  fetchTx?: FetchTx;
-  quoteTtlSeconds?: number;
+  facilitator: FacilitatorClient;
+  facilitatorLabel?: string;
+  replayGuard?: ReplayGuard;
+  /** On-chain signature check used to reconcile `settlement_pending` (injectable for tests). */
+  checkSignature?: SignatureCheck;
+  reconcileDelayMs?: number;
+  routes?: PaidRoute[];
   log?: (msg: string) => void;
 }
 
-/** Canonical resource id the quote is bound to: path + sorted query. */
-export function canonicalResource(url: URL): string {
-  const q = [...url.searchParams.entries()].sort(([a], [b]) => a.localeCompare(b));
-  const qs = new URLSearchParams(q).toString();
-  return qs ? `${url.pathname}?${qs}` : url.pathname;
-}
-
-/** Fetch a parsed tx at `confirmed`, retrying briefly for RPC propagation lag. */
-export function rpcFetchTx(connection: Connection): FetchTx {
-  return async (sig) => {
-    for (let i = 0; i < 8; i++) {
-      const tx = await connection.getParsedTransaction(sig, {
-        commitment: "confirmed",
-        maxSupportedTransactionVersion: 0,
-      });
-      if (tx) return tx;
-      await new Promise((r) => setTimeout(r, 750 * (i + 1)));
-    }
-    return null;
-  };
-}
-
-export function createServer(opts: ServerOptions): http.Server {
-  const ttl = opts.quoteTtlSeconds ?? 120;
-  const log = opts.log ?? (() => {});
-  const fetchTx = opts.fetchTx ?? rpcFetchTx(opts.connection!);
-
-  const send = (res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) => {
-    res.writeHead(status, { "content-type": "application/json; charset=utf-8", ...headers });
-    res.end(JSON.stringify(body, null, 2));
-  };
-
-  const issue402 = (res: http.ServerResponse, route: PaidRoute, url: URL, error: string) => {
-    const resource = canonicalResource(url);
-    const memo = `x402-${bs58.encode(crypto.randomBytes(16))}`;
-    const now = Math.floor(Date.now() / 1000);
-    const amount = toAtomic(route.price, TOKEN_DECIMALS).toString();
-    opts.store.saveQuote({
-      memo, resource, amount, asset: opts.mint, payTo: opts.payTo, network: NETWORK_DEVNET,
-      expiresAt: now + ttl, createdAt: now,
-    });
-    const req: PaymentRequirements = {
-      scheme: "exact",
-      network: NETWORK_DEVNET,
-      amount,
-      asset: opts.mint,
-      payTo: opts.payTo,
-      maxTimeoutSeconds: ttl,
-      extra: {
-        paymentFlow: "upfront",
-        assetTransferMethod: TRANSFER_METHOD_CLIENT_BROADCAST,
-        memo,
-        expiresAt: now + ttl,
-        decimals: TOKEN_DECIMALS,
-        symbol: TOKEN_SYMBOL,
+export function buildRoutesConfig(routes: PaidRoute[], payTo: string, mint: string): RoutesConfig {
+  const cfg: RoutesConfig = {};
+  for (const r of routes) {
+    cfg[`GET ${r.path}`] = {
+      accepts: {
+        scheme: "exact",
+        network: NETWORK_DEVNET,
+        payTo,
+        price: { amount: toAtomic(r.price, TOKEN_DECIMALS).toString(), asset: mint },
+        maxTimeoutSeconds: 120,
       },
+      description: `${r.description} — ${r.price} ${TOKEN_SYMBOL}`,
+      mimeType: "application/json",
     };
-    const body: PaymentRequired = {
-      x402Version: X402_VERSION,
-      error,
-      resource: { url: resource, description: `${route.description} — ${route.price} ${TOKEN_SYMBOL}`, mimeType: "application/json" },
-      accepts: [req],
-    };
-    send(res, 402, body, { [HEADER_PAYMENT_REQUIRED]: encodeHeader(body) });
-  };
+  }
+  return cfg;
+}
 
-  return http.createServer(async (req, res) => {
-    try {
-      const url = new URL(req.url ?? "/", "http://localhost");
-      if (req.method !== "GET") return send(res, 405, { error: "method_not_allowed" });
-
-      if (url.pathname === "/health") return send(res, 200, { ok: true });
-      if (url.pathname === "/" || url.pathname === "/catalog") {
-        return send(res, 200, {
-          name: "solana-agent-pay demo API",
-          protocol: "x402 v2 (Solana devnet, client-broadcast SPL transfer + memo reference)",
-          network: NETWORK_DEVNET,
-          asset: { mint: opts.mint, symbol: TOKEN_SYMBOL, decimals: TOKEN_DECIMALS },
-          payTo: opts.payTo,
-          endpoints: ROUTES.map((r) => ({ path: r.path, price: `${r.price} ${TOKEN_SYMBOL}`, description: r.description, params: r.params })),
-        });
-      }
-
-      const route = ROUTES.find((r) => r.path === url.pathname);
-      if (!route) return send(res, 404, { error: "not_found" });
-
-      const header = req.headers[HEADER_PAYMENT_SIGNATURE.toLowerCase()];
-      if (!header || Array.isArray(header)) {
-        log(`402 ${canonicalResource(url)} (no payment)`);
-        return issue402(res, route, url, `${HEADER_PAYMENT_SIGNATURE} header is required`);
-      }
-
-      let payload: PaymentPayload;
-      try {
-        payload = decodeHeader<PaymentPayload>(header);
-      } catch {
-        return send(res, 400, { error: "invalid_payment_header", message: `${HEADER_PAYMENT_SIGNATURE} must be base64-encoded JSON.` });
-      }
-
-      const resource = canonicalResource(url);
-      const result = await verifyPayment(payload, resource, { store: opts.store, fetchTx });
-      if (!result.ok) {
-        log(`402 ${resource} payment rejected: ${result.code}`);
-        const settle: SettlementResponse = {
-          success: false, errorReason: result.code, transaction: payload.payload?.transaction ?? "", network: NETWORK_DEVNET,
-        };
-        res.setHeader(HEADER_PAYMENT_RESPONSE, encodeHeader(settle));
-        return issue402(res, route, url, `${result.code}: ${result.message}`);
-      }
-
-      log(`200 ${resource} paid ${fromAtomic(result.amount, TOKEN_DECIMALS)} ${TOKEN_SYMBOL} tx=${result.signature}`);
-      let data: unknown;
-      try {
-        data = await route.handler(url.searchParams);
-      } catch (e) {
-        // Payment is already consumed; in production you would refund or issue a credit here.
-        const status = e instanceof UnknownCityError ? 404 : 502;
-        return send(res, status, { error: (e as Error).message, note: "Payment was accepted; contact support for a refund/credit." });
-      }
-      const settle: SettlementResponse = { success: true, payer: result.payer, transaction: result.signature, network: NETWORK_DEVNET };
-      return send(res, 200, { data, payment: settle }, { [HEADER_PAYMENT_RESPONSE]: encodeHeader(settle) });
-    } catch (e) {
-      log(`500 ${(e as Error).message}`);
-      return send(res, 500, { error: "internal_error" });
-    }
+export function createResourceServer(opts: ServerOptions): x402ResourceServer {
+  const log = opts.log ?? (() => {});
+  const rs = new x402ResourceServer(opts.facilitator).register(NETWORK_DEVNET, new ExactSvmScheme());
+  const guard = opts.replayGuard ?? new ReplayGuard();
+  // Reconciler first: a recovered settlement short-circuits the remaining failure hooks.
+  attachSettlementReconciler(rs, {
+    facilitator: opts.facilitator,
+    checkSignature: opts.checkSignature,
+    delayMs: opts.reconcileDelayMs,
+    log,
+    onRecovered: (payload, result) => {
+      guard.markSettled(payload);
+      log(`facilitator settle: recovered after pending, tx=${result.transaction}`);
+    },
   });
+  guard.attach(rs);
+  rs.onAfterVerify(async ({ result }) => {
+    if (result.isValid) log(`facilitator verify: ok (payer ${result.payer})`);
+  })
+    .onVerifyFailure(async ({ error }) => log(`facilitator verify: rejected — ${error.message.slice(0, 160)}`))
+    .onAfterSettle(async ({ result }) => {
+      log(result.success ? `facilitator settle: ok tx=${result.transaction}` : `facilitator settle: failed ${result.errorReason}`);
+    });
+  return rs;
+}
+
+export function createApp(opts: ServerOptions): Express {
+  const routes = opts.routes ?? ROUTES;
+  const log = opts.log ?? (() => {});
+  const app = express();
+  app.disable("x-powered-by");
+
+  // Request log (status is known once the response finishes)
+  app.use((req, res, next) => {
+    res.on("finish", () => {
+      if (req.path.startsWith("/api/")) {
+        const paid = req.headers["payment-signature"] ? "with PAYMENT-SIGNATURE" : "no payment";
+        log(`${res.statusCode} ${req.originalUrl} (${paid})`);
+      }
+    });
+    next();
+  });
+
+  app.get("/health", (_req, res) => {
+    res.json({ ok: true });
+  });
+  app.get(["/", "/catalog"], (_req, res) => {
+    res.json({
+      name: "solana-agent-pay demo API",
+      protocol: "x402 v2 — scheme exact on Solana devnet, settled by a facilitator",
+      network: NETWORK_DEVNET,
+      facilitator: opts.facilitatorLabel ?? "custom",
+      asset: { mint: opts.mint, symbol: TOKEN_SYMBOL, decimals: TOKEN_DECIMALS },
+      payTo: opts.payTo,
+      endpoints: routes.map((r) => ({ path: r.path, price: `${r.price} ${TOKEN_SYMBOL}`, description: r.description, params: r.params })),
+    });
+  });
+
+  app.use(paymentMiddleware(buildRoutesConfig(routes, opts.payTo, opts.mint), createResourceServer(opts)));
+
+  for (const r of routes) {
+    app.get(r.path, async (req, res) => {
+      try {
+        const q = new URLSearchParams(req.query as Record<string, string>);
+        res.json({ data: await r.handler(q) });
+      } catch (e) {
+        // Non-2xx responses are not settled by the middleware, so the client is not charged.
+        res.status(e instanceof UnknownCityError ? 404 : 502).json({ error: (e as Error).message });
+      }
+    });
+  }
+  return app;
 }

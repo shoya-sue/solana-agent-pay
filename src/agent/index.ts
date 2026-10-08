@@ -11,7 +11,7 @@ if (!process.env.ANTHROPIC_API_KEY) {
   console.error("ANTHROPIC_API_KEY is not set (see .env.example).");
   process.exit(1);
 }
-const { client } = createAgentClient(loadState(), serverUrl);
+const { client } = await createAgentClient(loadState(), serverUrl);
 section(`Agent (${CLAUDE_MODEL})`);
 const agent = new PayingAgent(client);
 await agent.run(task);

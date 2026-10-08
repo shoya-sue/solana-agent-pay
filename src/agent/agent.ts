@@ -110,7 +110,7 @@ export class PayingAgent {
             price: fmt(req.amount),
             pay_to: req.payTo,
             network: req.network,
-            expires_in_seconds: req.extra.expiresAt - Math.floor(Date.now() / 1000),
+            settled_by: "x402 facilitator (fee payer " + String(req.extra?.feePayer ?? "?") + ")",
             your_per_call_cap: fmt(g.policy.perCallCap),
             your_remaining_budget: fmt(g.remainingAtomic),
             policy_check: policy.allowed ? "allowed" : `would be refused: ${policy.reason}`,

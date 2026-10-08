@@ -10,22 +10,29 @@
     "node": ">=20"
   },
   "scripts": {
-    "setup": "tsx src/scripts/setup.ts",
-    "server": "tsx src/server/index.ts",
-    "agent": "tsx src/agent/index.ts",
-    "demo": "tsx src/scripts/demo.ts",
-    "test": "vitest run",
-    "test:devnet": "DEVNET_TESTS=1 vitest run test/devnet.test.ts",
+    "setup": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/scripts/setup.ts",
+    "server": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/server/index.ts",
+    "agent": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/agent/index.ts",
+    "demo": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/scripts/demo.ts",
+    "test": "NODE_OPTIONS=--disable-warning=ExperimentalWarning vitest run",
+    "test:devnet": "NODE_OPTIONS=--disable-warning=ExperimentalWarning DEVNET_TESTS=1 vitest run test/devnet.test.ts",
     "typecheck": "tsc --noEmit",
-    "demo:local": "SOLANA_RPC_URL=http://127.0.0.1:8899 WALLET_DIR=.wallets-local DATA_DIR=data/local DEMO_OUTPUT=data/local/demo-output-local.txt tsx src/scripts/demo.ts"
+    "demo:local": "NODE_OPTIONS=--disable-warning=ExperimentalWarning FACILITATOR=local SOLANA_RPC_URL=http://127.0.0.1:8899 WALLET_DIR=.wallets-local DATA_DIR=data/local DEMO_OUTPUT=data/local/demo-output-local.txt tsx src/scripts/demo.ts",
+    "facilitator": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/facilitator/index.ts",
+    "demo:local-facilitator": "FACILITATOR=local npm run demo"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.132.1",
     "@solana/spl-token": "^0.4.15",
     "@solana/web3.js": "^1.99.0",
-    "bs58": "^6.0.0"
+    "@x402/core": "^2.28.0",
+    "@x402/express": "^2.28.0",
+    "@x402/fetch": "^2.28.0",
+    "@x402/svm": "^2.28.0",
+    "express": "^5.2.1"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^20.19.43",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",

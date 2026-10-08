@@ -33,6 +33,18 @@ export const TOKEN_SYMBOL = "dUSDC";
 
 export const SERVER_PORT = Number(process.env.PORT ?? 4021);
 
+/**
+ * x402 facilitator that verifies + settles payments (co-signs as fee payer and broadcasts).
+ *  - default: the public x402.org facilitator (supports `exact` on Solana devnet, no signup)
+ *  - FACILITATOR=local: run the official @x402/core + @x402/svm facilitator in-process, with the
+ *    project's throwaway `funder` devnet wallet as fee payer
+ *  - FACILITATOR_URL=...: any other x402 v2 facilitator
+ */
+export const PUBLIC_FACILITATOR_URL = "https://x402.org/facilitator";
+export const FACILITATOR_MODE = (process.env.FACILITATOR ?? "public").toLowerCase();
+export const FACILITATOR_URL = process.env.FACILITATOR_URL ?? PUBLIC_FACILITATOR_URL;
+export const LOCAL_FACILITATOR_PORT = Number(process.env.FACILITATOR_PORT ?? 4022);
+
 /** Claude model for the agent's reasoning (picked from GET /v1/models; Sonnet-class for cost). */
 export const CLAUDE_MODEL = process.env.CLAUDE_MODEL ?? "claude-sonnet-5-5";
 

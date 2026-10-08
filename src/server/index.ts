@@ -1,19 +1,21 @@
 import path from "node:path";
-import { Connection } from "@solana/web3.js";
-import { DATA_DIR, RPC_URL, SERVER_PORT, assertDevnetUrl } from "../config.js";
+import { DATA_DIR, SERVER_PORT, assertDevnetUrl } from "../config.js";
 import { loadState } from "../solana/wallets.js";
-import { createServer } from "./app.js";
-import { FilePaymentStore } from "./store.js";
+import { createApp } from "./app.js";
+import { resolveFacilitator } from "./facilitator.js";
+import { ReplayGuard } from "./replay.js";
 
 assertDevnetUrl();
 const state = loadState();
-const server = createServer({
+const { client, label } = await resolveFacilitator();
+const app = createApp({
   payTo: state.server,
   mint: state.mint,
-  store: new FilePaymentStore(path.join(DATA_DIR, "payments.json")),
-  connection: new Connection(RPC_URL, "confirmed"),
+  facilitator: client,
+  facilitatorLabel: label,
+  replayGuard: new ReplayGuard(path.join(DATA_DIR, "settled-payments.json")),
   log: (m) => console.log(`[server] ${m}`),
 });
-server.listen(SERVER_PORT, () => {
-  console.log(`[server] paid API listening on http://localhost:${SERVER_PORT}  (payTo=${state.server}, mint=${state.mint})`);
+app.listen(SERVER_PORT, () => {
+  console.log(`[server] paid API on http://localhost:${SERVER_PORT}  payTo=${state.server} mint=${state.mint}  facilitator=${label}`);
 });
