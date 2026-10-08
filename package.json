@@ -1,0 +1,34 @@
+{
+  "name": "solana-agent-pay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "An AI agent (Claude) that pays for API calls by itself with SPL tokens on Solana devnet, using an x402-style HTTP 402 flow.",
+  "type": "module",
+  "license": "MIT",
+  "author": "shoya-sue",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "setup": "tsx src/scripts/setup.ts",
+    "server": "tsx src/server/index.ts",
+    "agent": "tsx src/agent/index.ts",
+    "demo": "tsx src/scripts/demo.ts",
+    "test": "vitest run",
+    "test:devnet": "DEVNET_TESTS=1 vitest run test/devnet.test.ts",
+    "typecheck": "tsc --noEmit",
+    "demo:local": "SOLANA_RPC_URL=http://127.0.0.1:8899 WALLET_DIR=.wallets-local DATA_DIR=data/local DEMO_OUTPUT=data/local/demo-output-local.txt tsx src/scripts/demo.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.132.1",
+    "@solana/spl-token": "^0.4.15",
+    "@solana/web3.js": "^1.99.0",
+    "bs58": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}

@@ -1,0 +1,20 @@
+# dependencies / build
+node_modules/
+dist/
+*.tsbuildinfo
+
+# secrets — NEVER commit
+.env
+.env.*
+!.env.example
+.wallets/
+.wallets-local/
+*.keypair.json
+id.json
+
+# runtime state (nonces, used signatures)
+data/
+
+# logs
+*.log
+npm-debug.log*
